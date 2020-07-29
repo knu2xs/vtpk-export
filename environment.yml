@@ -5,6 +5,9 @@ channels:
   - conda-forge
 
 dependencies:
-  - arcgis==1.8.1
-  - dask
-  - requests
+  - arcgis~=1.8.1
+  - dask~=2.21.0
+  - pytest~=5.4.3
+  - python-dotenv~=0.13.0
+  - requests~=2.24.0
+  - setuptools~=47.3.1
