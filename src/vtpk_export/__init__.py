@@ -151,6 +151,7 @@ class VectorTileLayer(FeatureLayer):
 
                 # if too many tiles, slice up the job
                 if mtch:
+                    
                     # from the error message, get the number of tiles needed divided by the max response
                     mtch_vals = [int(val) for val in mtch.groups()]
 
@@ -172,7 +173,7 @@ class VectorTileLayer(FeatureLayer):
                             self._con.token
                         ) for ext in ext_lst]
 
-                    # TODO: load all responses into a dask bag and call db.map(_get_job_result).compute() to get results
+                    # load all responses into a dask bag and retrieve results asynchronously
                     vtpk_lst = db.from_sequence(job_lst).map(_get_job_result).compute()
 
                 else:
