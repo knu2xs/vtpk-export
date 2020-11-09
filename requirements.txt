@@ -1,4 +1,4 @@
-arcgis~=1.8.1
+arcgis~=1.8.2
 dask~=2.21.0
 pytest~=5.4.3
 python-dotenv~=0.13.0

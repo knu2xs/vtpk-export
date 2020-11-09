@@ -7,9 +7,68 @@ import re
 import tempfile
 from time import sleep
 
-from arcgis.features import FeatureLayer
+from arcgis.gis import Layer
+from arcgis.geometry import Geometry, SpatialReference
 import dask.bag as db
 import requests
+
+
+def get_extent(input_object: [list, tuple, Geometry, dict], spatial_reference: [dict, SpatialReference] = None) -> dict:
+    """
+    No matter what type of extent representation
+    passed in, return standardized extent as a
+    dictionary.
+
+    :param input_object: Representation of an extent
+        as an iterable, geometry or extent dictionary.
+    :param spatial_reference: Spatial reference for
+        the extent. Required if the input object is
+        a tuple or list.
+
+    :return: Dictionary representation of the extent.
+        in the form of {"xmin": <float>, "ymin": <float>,
+        "xmax": <float>, "ymax": <float>,
+        "spatialReference": {"wkid": <int>} }
+    """
+    # make sure the input is one of the acceptable data types
+    assert isinstance(input_object, (list, tuple, Geometry, dict))
+
+    # if already an extent dictionary
+    if isinstance(input_object, dict) and not isinstance(input_object, Geometry):
+
+        assert list(input_object.keys()) == ['xmin', 'ymin', 'xmax', 'ymax', 'spatialReference'], \
+            'Extent dictionary must be in the form of {"xmin": <float>, "ymin": <float>, "xmax": <float>, ' \
+            '"ymax": <float>, "spatialReference": {"wkid": <int>} }'
+
+        ext = input_object
+
+    # if a geometry object is provided
+    elif isinstance(input_object, Geometry):
+
+        # get the extent and set the spatial reference
+        spatial_reference = input_object.spatial_reference
+        input_object = input_object.extent
+
+    # if simply passed in as series of four values as iterables
+    if isinstance(input_object, (list, tuple)):
+
+        # ensure the max values are, in fact, greater than the min values
+        assert input_object[0] < input_object[2], 'xmax value must be greater than xmin value'
+        assert input_object[1] < input_object[3], 'ymax value must be greater than ymin value'
+
+        # make sure the spatial reference is correctly provided
+        assert spatial_reference is not None, 'If providing the extent as an iterable, you must provide a spatial ' \
+                                              'reference.'
+
+        # make sure the dictionary is set up correctly if provided as a dictionary
+        if isinstance(spatial_reference, dict):
+            assert 'wkid' in spatial_reference.keys(), 'wkid must be defined in the spatial_reference'
+            assert isinstance(spatial_reference['wkid'], int), 'spatial_reference wkid must be an integer'
+
+        ext = {'xmin': input_object[0], 'ymin': input_object[1], 'xmax': input_object[2], 'ymax': input_object[3],
+               'spatialReference': spatial_reference}
+
+    return ext
 
 
 def _download_file(url, out_name=None, out_dir=None):
@@ -56,10 +115,11 @@ def _new_extent(ext, xmin=None, ymin=None, xmax=None, ymax=None):
             new_ext[ext_key] = in_vals[ext_key]
     return new_ext
 
-def _get_job_result(input_params):
+
+def _get_job_result(input_params: [list, tuple]):
     """Helper function to check and download the job result."""
 
-    req_resp, root_url, token = input_params
+    req_resp, root_url, token, out_dir = input_params
     resp = req_resp.json()
 
     # get the job id from the response
@@ -81,10 +141,12 @@ def _get_job_result(input_params):
             job_complete = True
 
     # download the generated vtpk file
-    return _download_file(job_json['output']['outputUrl'][0])
+    out_file = _download_file(job_json['output']['outputUrl'][0], out_dir=out_dir)
+
+    return out_file
 
 
-class VectorTileLayer(FeatureLayer):
+class VectorTileLayer(Layer):
     """
     Vector Tile Layer, subclassed FeatureLayer to add ability to export tiles.
     """
@@ -132,14 +194,19 @@ class VectorTileLayer(FeatureLayer):
     def _get_job_result(self, request_resp):
         return _get_job_result((request_resp, self.url, self._con.token))
 
-    def export_tiles(self, levels_of_detail=None, extent=None, params=None, output_vtpk=None, status=False):
-        """Export tiles to vtpk"""
+    def export_tiles(self, levels_of_detail=None, extent: Geometry = None, params: dict = None, output_dir: str = None):
+        """Export tiles to vtpk."""
+        # get the extent formatted
+        ext = get_extent(extent)
+
         # make the initial call to the REST endpoint, which will return a job id
-        init_resp = self._call_export_tiles(levels_of_detail=levels_of_detail, extent=extent, _params=params)
+        init_resp = self._call_export_tiles(levels_of_detail=levels_of_detail, extent=ext, _params=params)
 
         # if there is an error in the initial response
         if 'error' in init_resp.json().keys():
+
             err = init_resp.json()['error']
+
             if err['code'] == 500:
                 msg = err['message']
 
@@ -170,7 +237,8 @@ class VectorTileLayer(FeatureLayer):
                     job_lst = [(
                             self._call_export_tiles(levels_of_detail=levels_of_detail, extent=ext, _params=params),
                             self.url,
-                            self._con.token
+                            self._con.token,
+                            output_dir
                         ) for ext in ext_lst]
 
                     # load all responses into a dask bag and retrieve results asynchronously
